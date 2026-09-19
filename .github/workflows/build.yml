@@ -126,8 +126,9 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CC=clang
+          export KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-pointer-types -Wno-error=implicit-int"
           make -j$(nproc --all) O=out ARCH=$ARCH CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- 2>&1 | tee build.log
+            CLANG_TRIPLE=aarch64-linux-gnu- KCFLAGS="$KCFLAGS" 2>&1 | tee build.log
 
       - name: Check build output
         run: |

@@ -6,7 +6,7 @@ on:
       defconfig:
         description: "Nama defconfig untuk A325F (cek arch/arm64/configs/)"
         required: true
-        default: "a32_eea_open_defconfig"
+        default: "a32_defconfig"
 
 env:
   KERNEL_NAME: "Scamsung"
@@ -76,14 +76,28 @@ jobs:
         run: |
           CFG="out/.config"
           if [ ! -f "$CFG" ]; then echo "File .config tidak ditemukan, cek step sebelumnya."; exit 1; fi
+
+          # Matikan fitur proprietary Samsung (RKP/KDP/UH hypervisor) yang
+          # source implementasinya tidak disertakan di rilis open-source ini,
+          # tapi pemanggilnya masih aktif di init/main.c -> bikin build gagal
+          for opt in RKP RKP_CFP RKP_DMAP RKP_NS_PROT KDP KDP_CRED KDP_NS \
+                     UH UH_RKP SECURITY_DEFEX FIVE PROCA; do
+            ./scripts/config --file "$CFG" -d "$opt" 2>/dev/null || true
+          done
+
+          # Matikan semua varian nama KernelSU yang umum dipakai fork
           for opt in KSU KERNEL_SU KPROBES_HOOK KSU_SUSFS SUSFS; do
             ./scripts/config --file "$CFG" -d "$opt" 2>/dev/null || true
           done
+
+          # Pastikan SELinux aktif dan tidak bisa dibikin permissive
           ./scripts/config --file "$CFG" -e SECURITY
           ./scripts/config --file "$CFG" -e SECURITY_SELINUX
           ./scripts/config --file "$CFG" -d SECURITY_SELINUX_DEVELOP
           ./scripts/config --file "$CFG" -d SECURITY_SELINUX_BOOTPARAM
           ./scripts/config --file "$CFG" -d SECURITY_SELINUX_DISABLE
+
+          # Sinkronkan ulang config setelah dipaksa ubah
           make O=out ARCH=$ARCH olddefconfig
 
       - name: Verify clean config (fail build kalau tidak bersih)
@@ -95,6 +109,7 @@ jobs:
             exit 1
           fi
           echo "Bersih dari KSU/root."
+
           echo "== Cek status SELinux =="
           if grep -E "^CONFIG_SECURITY_SELINUX_DEVELOP=y|^CONFIG_SECURITY_SELINUX_BOOTPARAM=y|^CONFIG_SECURITY_SELINUX_DISABLE=y" "$CFG"; then
             echo "GAGAL: kernel masih bisa dijalankan dalam mode permissive!"

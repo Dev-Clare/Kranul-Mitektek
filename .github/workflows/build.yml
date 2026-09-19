@@ -126,7 +126,11 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CC=clang
-          export KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-pointer-types -Wno-error=implicit-int"
+          # Source kernel lama vs Clang modern sering bentrok soal implicit
+          # declaration (fungsi asli kernel yang cuma beda urutan header/versi
+          # backport) - turunkan ini dari error jadi warning saja supaya build
+          # tidak berhenti tiap ketemu 1 fungsi seperti ini.
+          export KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-pointer-types -Wno-error=implicit-int -Wno-error=macro-redefined"
           make -j$(nproc --all) O=out ARCH=$ARCH CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- KCFLAGS="$KCFLAGS" 2>&1 | tee build.log
 

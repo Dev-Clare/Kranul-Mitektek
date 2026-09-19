@@ -1,0 +1,178 @@
+# Simpan sebagai: .github/workflows/build-a325f.yml
+# Jalankan dari tab Actions -> "Build A325F Kernel (clean)" -> Run workflow
+
+name: Build A325F Kernel (clean)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_repo:
+        description: "Repo source kernel (owner/nama)"
+        required: true
+        default: "Samsung-MT6769-Devs/android_kernel_samsung_mt6768"
+      kernel_ref:
+        description: "Branch / tag / commit"
+        required: true
+        default: "common"
+      profile:
+        description: "Profil config (jangan campur)"
+        type: choice
+        options:
+          - battery
+          - perf
+        default: battery
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    env:
+      CLANG_TAG: "14.0.6-20250704-release"
+      DEVICE: "a32"
+      PROFILE: ${{ inputs.profile }}
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: kernel
+
+    steps:
+      - name: Checkout source kernel
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.kernel_repo }}
+          ref: ${{ inputs.kernel_ref }}
+          path: kernel
+          fetch-depth: 1
+
+      - name: Install dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex libssl-dev libelf-dev cpio zlib1g-dev \
+            python3 python-is-python3 lz4 xz-utils zip
+
+      - name: Download ZyC Clang 14.0.6
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/clang-dl" "$HOME/zyc-clang"
+          gh release download "$CLANG_TAG" \
+            --repo ZyCromerZ/Clang \
+            --pattern '*.tar.*' \
+            --dir "$RUNNER_TEMP/clang-dl"
+          ls -lh "$RUNNER_TEMP/clang-dl"
+          tar -xf "$RUNNER_TEMP"/clang-dl/*.tar.* -C "$HOME/zyc-clang"
+
+          CLANG_BIN=$(find "$HOME/zyc-clang" \( -type f -o -type l \) -name clang -path '*/bin/*' | head -n1)
+          if [ -z "$CLANG_BIN" ]; then
+            echo "clang tidak ketemu setelah ekstrak"; exit 1
+          fi
+          TC=$(dirname "$(dirname "$CLANG_BIN")")
+          echo "TC=$TC" >> "$GITHUB_ENV"
+          "$TC/bin/clang" --version | head -n1
+
+      - name: Susun config (enforcing, tanpa KSU, GPU stock)
+        run: |
+          CFGDIR=arch/arm64/configs
+
+          for f in mt6768_slm_defconfig "$DEVICE.config" "$PROFILE.config"; do
+            [ -f "$CFGDIR/$f" ] || { echo "Config tidak ada: $CFGDIR/$f"; exit 1; }
+          done
+
+          cat "$CFGDIR/mt6768_slm_defconfig" \
+              "$CFGDIR/$DEVICE.config" \
+              "$CFGDIR/$PROFILE.config" > "$CFGDIR/compiled_defconfig"
+
+          # Buang sisa setting yang bentrok
+          sed -i \
+            -e '/CONFIG_KSU/d' \
+            -e '/CONFIG_KERNELSU/d' \
+            -e '/CONFIG_ALWAYS_PERMISSIVE/d' \
+            -e '/CONFIG_ALWAYS_ENFORCE/d' \
+            -e '/CONFIG_MTK_GPU_VERSION/d' \
+            "$CFGDIR/compiled_defconfig"
+
+          cat >> "$CFGDIR/compiled_defconfig" <<'EOF'
+
+          CONFIG_ALWAYS_ENFORCE=y
+          # CONFIG_ALWAYS_PERMISSIVE is not set
+          CONFIG_MTK_GPU_VERSION="mali bifrost r25p0"
+          EOF
+
+      - name: Generate .config dan verifikasi
+        run: |
+          export PATH="$TC/bin:$PATH"
+          export ARCH=arm64
+          export CC="$TC/bin/clang"
+          export LD="$TC/bin/ld.lld"
+          export CROSS_COMPILE="$TC/bin/aarch64-linux-gnu-"
+
+          make O=out compiled_defconfig 2>&1 | tee ../defconfig.log
+
+          echo "=== Verifikasi .config ==="
+          grep -E '^(# )?CONFIG_(ALWAYS_ENFORCE|ALWAYS_PERMISSIVE)[ =]' out/.config || true
+          grep -E '^CONFIG_MTK_GPU_VERSION=' out/.config || true
+
+          if grep -qiE '^CONFIG_(KSU|KERNELSU)' out/.config; then
+            echo "::error::Config KSU masih ada di .config"
+            exit 1
+          fi
+          echo "OK: tidak ada KSU"
+
+          if ! grep -q '^CONFIG_ALWAYS_ENFORCE=y' out/.config; then
+            echo "::warning::CONFIG_ALWAYS_ENFORCE=y tidak masuk ke .config (nama opsi mungkin beda di source ini)"
+          fi
+
+      - name: Compile kernel
+        run: |
+          export PATH="$TC/bin:$PATH"
+          export ARCH=arm64
+          export CROSS_COMPILE="$TC/bin/aarch64-linux-gnu-"
+          export CC="$TC/bin/clang"
+          export LD="$TC/bin/ld.lld"
+          export AS="$TC/bin/llvm-as"
+          export NM="$TC/bin/llvm-nm"
+          export OBJCOPY="$TC/bin/llvm-objcopy"
+          export OBJDUMP="$TC/bin/llvm-objdump"
+          export READELF="$TC/bin/llvm-readelf"
+          export STRIP="$TC/bin/llvm-strip"
+          export KCFLAGS=' -w -pipe -O3'
+          export KCPPFLAGS=' -O3'
+          export CONFIG_SECTION_MISMATCH_WARN_ONLY=y
+
+          make O=out -j"$(nproc)" 2>&1 | tee ../build.log
+
+      - name: Ringkasan error (jika gagal)
+        if: failure()
+        run: |
+          echo "=== Ringkasan error ==="
+          grep -nE 'error:|Error [0-9]+|undefined reference|No such file|fatal error' ../build.log | head -n 40 || true
+          echo "=== 30 baris terakhir ==="
+          tail -n 30 ../build.log || true
+
+      - name: Kumpulkan hasil
+        run: |
+          mkdir -p ../result
+          cp out/arch/arm64/boot/Image ../result/Image
+          cp out/.config ../result/config.txt
+          find out/arch/arm64/boot -maxdepth 2 -name '*.dtb' -exec cp {} ../result/ \; || true
+          ls -lh ../result
+
+      - name: Upload hasil
+        uses: actions/upload-artifact@v4
+        with:
+          name: a325f-kernel-${{ inputs.profile }}
+          path: result/*
+          if-no-files-found: error
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            build.log
+            defconfig.log
+          if-no-files-found: ignore

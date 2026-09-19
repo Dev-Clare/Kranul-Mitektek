@@ -77,27 +77,21 @@ jobs:
           CFG="out/.config"
           if [ ! -f "$CFG" ]; then echo "File .config tidak ditemukan, cek step sebelumnya."; exit 1; fi
 
-          # Matikan fitur proprietary Samsung (RKP/KDP/UH hypervisor) yang
-          # source implementasinya tidak disertakan di rilis open-source ini,
-          # tapi pemanggilnya masih aktif di init/main.c -> bikin build gagal
           for opt in RKP RKP_CFP RKP_DMAP RKP_NS_PROT KDP KDP_CRED KDP_NS \
                      UH UH_RKP SECURITY_DEFEX FIVE PROCA; do
             ./scripts/config --file "$CFG" -d "$opt" 2>/dev/null || true
           done
 
-          # Matikan semua varian nama KernelSU yang umum dipakai fork
           for opt in KSU KERNEL_SU KPROBES_HOOK KSU_SUSFS SUSFS; do
             ./scripts/config --file "$CFG" -d "$opt" 2>/dev/null || true
           done
 
-          # Pastikan SELinux aktif dan tidak bisa dibikin permissive
           ./scripts/config --file "$CFG" -e SECURITY
           ./scripts/config --file "$CFG" -e SECURITY_SELINUX
           ./scripts/config --file "$CFG" -d SECURITY_SELINUX_DEVELOP
           ./scripts/config --file "$CFG" -d SECURITY_SELINUX_BOOTPARAM
           ./scripts/config --file "$CFG" -d SECURITY_SELINUX_DISABLE
 
-          # Sinkronkan ulang config setelah dipaksa ubah
           make O=out ARCH=$ARCH olddefconfig
 
       - name: Verify clean config (fail build kalau tidak bersih)
@@ -126,11 +120,7 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           export CC=clang
-          # Source kernel lama vs Clang modern sering bentrok soal implicit
-          # declaration (fungsi asli kernel yang cuma beda urutan header/versi
-          # backport) - turunkan ini dari error jadi warning saja supaya build
-          # tidak berhenti tiap ketemu 1 fungsi seperti ini.
-          export KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-pointer-types -Wno-error=implicit-int -Wno-error=macro-redefined"
+          export KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-pointer-types -Wno-error=implicit-int -Wno-error=macro-redefined -Wno-error=visibility"
           make -j$(nproc --all) O=out ARCH=$ARCH CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- KCFLAGS="$KCFLAGS" 2>&1 | tee build.log
 

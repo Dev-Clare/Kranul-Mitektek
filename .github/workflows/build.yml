@@ -28,7 +28,8 @@ jobs:
     timeout-minutes: 120
 
     env:
-      CLANG_TAG: "14.0.6-20250704-release"
+      CLANG_VERSION: "14.0.6"
+      CLANG_DATE: "20250704"
       DEVICE: "a32"
       PROFILE: ${{ inputs.profile }}
 
@@ -51,23 +52,45 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             bc bison flex libssl-dev libelf-dev cpio zlib1g-dev \
-            python3 python-is-python3 lz4 xz-utils zip
+            python3 python-is-python3 lz4 xz-utils zip unzip
 
       - name: Download ZyC Clang 14.0.6
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p "$RUNNER_TEMP/clang-dl" "$HOME/zyc-clang"
-          gh release download "$CLANG_TAG" \
-            --repo ZyCromerZ/Clang \
-            --pattern '*.tar.*' \
-            --dir "$RUNNER_TEMP/clang-dl"
-          ls -lh "$RUNNER_TEMP/clang-dl"
-          tar -xf "$RUNNER_TEMP"/clang-dl/*.tar.* -C "$HOME/zyc-clang"
+          DL="$RUNNER_TEMP/clang-dl"
+          mkdir -p "$DL" "$HOME/zyc-clang"
+
+          # Cari tag rilis yang cocok (format nama tag ZyC tidak selalu sama)
+          ALL_TAGS=$(gh release list --repo ZyCromerZ/Clang --limit 500 --json tagName -q '.[].tagName')
+          TAG=$(echo "$ALL_TAGS" | grep -F "$CLANG_VERSION-$CLANG_DATE" | head -n1 || true)
+          if [ -z "$TAG" ]; then
+            echo "::warning::Tag $CLANG_VERSION-$CLANG_DATE tidak ketemu, pakai rilis $CLANG_VERSION terbaru"
+            TAG=$(echo "$ALL_TAGS" | grep -F "$CLANG_VERSION-" | head -n1 || true)
+          fi
+          if [ -z "$TAG" ]; then
+            echo "::error::Tidak ada rilis clang $CLANG_VERSION di ZyCromerZ/Clang"
+            exit 1
+          fi
+          echo "Tag dipakai: $TAG"
+
+          echo "Asset di rilis ini:"
+          gh release view "$TAG" --repo ZyCromerZ/Clang --json assets -q '.assets[].name'
+
+          gh release download "$TAG" --repo ZyCromerZ/Clang --pattern '*.tar.*' --dir "$DL" \
+            || gh release download "$TAG" --repo ZyCromerZ/Clang --pattern '*.zip' --dir "$DL"
+          ls -lh "$DL"
+
+          FILE=$(ls "$DL"/* | head -n1)
+          case "$FILE" in
+            *.zip) unzip -q "$FILE" -d "$HOME/zyc-clang" ;;
+            *)     tar -xf "$FILE" -C "$HOME/zyc-clang" ;;
+          esac
 
           CLANG_BIN=$(find "$HOME/zyc-clang" \( -type f -o -type l \) -name clang -path '*/bin/*' | head -n1)
           if [ -z "$CLANG_BIN" ]; then
-            echo "clang tidak ketemu setelah ekstrak"; exit 1
+            echo "::error::clang tidak ketemu setelah ekstrak"
+            exit 1
           fi
           TC=$(dirname "$(dirname "$CLANG_BIN")")
           echo "TC=$TC" >> "$GITHUB_ENV"
@@ -151,6 +174,12 @@ jobs:
           grep -nE 'error:|Error [0-9]+|undefined reference|No such file|fatal error' ../build.log | head -n 40 || true
           echo "=== 30 baris terakhir ==="
           tail -n 30 ../build.log || true
+          {
+            echo "## Build gagal - ringkasan error"
+            echo '```'
+            grep -nE 'error:|Error [0-9]+|undefined reference|No such file|fatal error' ../build.log | head -n 40 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Kumpulkan hasil
         run: |

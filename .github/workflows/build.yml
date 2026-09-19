@@ -14,7 +14,7 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential bc libncurses5-dev libssl-dev bison flex libelf-dev zip ccache glibc-source clang libssl-dev python2 python3 python-is-python3
+        sudo apt-get install -y build-essential bc libncurses5-dev libssl-dev bison flex libelf-dev zip ccache glibc-source clang libssl-dev python3 python-is-python3
 
     - name: Download AOSP Toolchain (Clang & GCC)
       run: |

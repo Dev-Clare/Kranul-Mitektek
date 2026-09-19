@@ -52,7 +52,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             bc bison flex libssl-dev libelf-dev cpio zlib1g-dev \
-            python3 python-is-python3 lz4 xz-utils zip unzip
+            python3 python-is-python3 lz4 xz-utils zip unzip dwarves
 
       - name: Download ZyC Clang 14.0.6
         env:
@@ -115,6 +115,7 @@ jobs:
             -e '/CONFIG_ALWAYS_PERMISSIVE/d' \
             -e '/CONFIG_ALWAYS_ENFORCE/d' \
             -e '/CONFIG_MTK_GPU_VERSION/d' \
+            -e '/CONFIG_DEBUG_INFO_BTF/d' \
             "$CFGDIR/compiled_defconfig"
 
           cat >> "$CFGDIR/compiled_defconfig" <<'EOF'
@@ -122,6 +123,9 @@ jobs:
           CONFIG_ALWAYS_ENFORCE=y
           # CONFIG_ALWAYS_PERMISSIVE is not set
           CONFIG_MTK_GPU_VERSION="mali bifrost r25p0"
+
+          # BTF tidak dibutuhkan kernel HP dan memicu error pahole saat link vmlinux
+          # CONFIG_DEBUG_INFO_BTF is not set
           EOF
 
       - name: Generate .config dan verifikasi
@@ -143,6 +147,12 @@ jobs:
             exit 1
           fi
           echo "OK: tidak ada KSU"
+
+          if grep -q '^CONFIG_DEBUG_INFO_BTF=y' out/.config; then
+            echo "::warning::BTF masih aktif di .config (ada opsi lain yang menyalakannya)"
+          else
+            echo "OK: BTF nonaktif"
+          fi
 
           if ! grep -q '^CONFIG_ALWAYS_ENFORCE=y' out/.config; then
             echo "::warning::CONFIG_ALWAYS_ENFORCE=y tidak masuk ke .config (nama opsi mungkin beda di source ini)"
